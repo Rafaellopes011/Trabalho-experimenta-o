@@ -1,0 +1,85 @@
+extends CharacterBody2D
+
+const SPEED = 250.0
+const JUMP_VELOCITY = -750.0
+
+@onready var sprite_2d = $Sprite2D
+@onready var websocket := WebSocketClient.new()
+
+# Get the gravity from the project settings to be synced with RigidBody nodes.
+var gravity = ProjectSettings.get_setting("physics/2d/default_gravity")
+
+# Estados recebidos do ESP32
+var andar_frente = false
+var andar_tras = false
+var pular = false
+
+# Flag para verificar conexão do ESP32
+var esp32_conectado = false
+
+func _ready():
+    # Conectar ao WebSocket do ESP32
+    var esp32_ip = "ws://192.168.0.100/ws"  # Substitua pelo IP do ESP32
+    websocket.connect_to_url(esp32_ip)
+    print("Conectando ao ESP32:", esp32_ip)
+
+func _process(delta):
+    # Poll para verificar mensagens WebSocket
+    if websocket.get_connection_status() == WebSocketClient.CONNECTION_CONNECTED:
+        websocket.poll()
+        esp32_conectado = true
+    elif websocket.get_connection_status() == WebSocketClient.CONNECTION_DISCONNECTED:
+        print("Desconectado do ESP32")
+        esp32_conectado = false
+    elif websocket.get_connection_status() == WebSocketClient.CONNECTION_CONNECTING:
+        print("Conectando...")
+
+func _on_data_received():
+    while websocket.get_available_packet_count() > 0:
+        var data = websocket.get_packet().get_string_from_utf8()
+        var json = JSON.parse(data)
+        if json.error == OK:
+            var estados = json.result
+            andar_frente = estados["frente"]
+            andar_tras = estados["tras"]
+            pular = estados["pular"]
+
+func _physics_process(delta):
+    # Animações
+    if (velocity.x > 1 or velocity.x < -1):
+        sprite_2d.animation = "running"
+    else:
+        sprite_2d.animation = "default"
+
+    # Adicionar gravidade
+    if not is_on_floor():
+        velocity.y += gravity * delta
+        sprite_2d.animation = "jumping"
+
+    # Controle de pulo (ESP32 ou teclado)
+    if esp32_conectado:
+        if pular and is_on_floor():
+            velocity.y = JUMP_VELOCITY
+    else:
+        if Input.is_action_just_pressed("jump") and is_on_floor():
+            velocity.y = JUMP_VELOCITY
+
+    # Controle de movimentação (ESP32 ou teclado)
+    if esp32_conectado:
+        if andar_frente:
+            velocity.x = SPEED
+        elif andar_tras:
+            velocity.x = -SPEED
+        else:
+            velocity.x = move_toward(velocity.x, 0, 12)
+    else:
+        var direction = Input.get_axis("left", "right")
+        if direction:
+            velocity.x = direction * SPEED
+        else:
+            velocity.x = move_toward(velocity.x, 0, 12)
+
+    move_and_slide()
+
+    # Direção do sprite
+    sprite_2d.flip_h = velocity.x < 0
